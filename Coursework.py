@@ -44,103 +44,79 @@ def clip_pixel(value):
         value = 255
     return int(value)
 
-def gaussian_noise(scale):
-    sd_value = random.normal(scale=scale)
+def gaussian_noise(args, pixel):
+    sd_value = random.normal(scale=args["modifier"])
     sd_value = clip_pixel(sd_value)
-    return sd_value
+    return sd_value + pixel["pixel"]
 
-def contrast_pixel(multiplier, pixel):
-    m_value = multiplier * pixel
+def contrast_pixel(args, pixel):
+    m_value = args["modifier"] * pixel["pixel"]
     m_value = clip_pixel(m_value)
     return m_value
 
-def modify_brightness(mode, modifier, pixel):
-    if mode == 'brightness_up':
-        m_value = modifier + pixel
-    else:
-        m_value = modifier - pixel
+# this was simplified to assume if brigtness decreased a negative modifier was given
+def modify_pixel_brightness(args, pixel):
+    m_value = args["modifier"] + pixel["pixel"]
     m_value = clip_pixel(m_value)
     return m_value
 
-def occlude_image(mod, top_left, image, row_index, pixel_index, pixel):
-    current_loc = [row_index, pixel_index]
-    m_value = pixel
-    modifier = occlusion_box_size[mod]
+def occlude_image(args, pix):
+    current_loc = [pix["row_idx"], pix["pix_idx"]]
+    m_value = pix["pixel"]
+    modifier = occlusion_box_size[args["modifier"]] # I am not quite sure what this is meant to be, I can't find any ref to it in your code
     
     #If its within the occlusion zone set the pixel to black
-    if current_loc[0] == top_left[0] or \
-    current_loc[0] < top_left[0] + modifier and current_loc[0] > top_left[0]:
-        if current_loc[1] == top_left[1] or \
-        current_loc[1] < top_left[1] + modifier and current_loc[1] > top_left[1]:
+    if current_loc[0] == args["occ_idx"][0] or current_loc[0] < args["occ_idx"][0] + modifier and current_loc[0] > args["occ_idx"][0]:
+        if current_loc[1] == args["occ_idx"][1] or current_loc[1] < args["occ_idx"][1] + modifier and current_loc[1] > args["occ_idx"][1]:
             m_value = 0
     
     return m_value
-        
-def sp_image(image, modification_index):
-    noisy_image = random_noise(image, var=sp_intensity[modification_index])
-    return noisy_image
 
-def loop_all_images(modification, modification_index, sap_amount=0.05):
+# Don't think this function is ever used anywhere? Delete if I am right
+# def sp_image(image, modification_index):
+#     noisy_image = random_noise(image, var=sp_intensity[modification_index])
+#     return noisy_image
 
-    #Start with the first folder
-    folder_index = 0
+def loop_pixels(orig_image, new_image, perturb_func, args):
+    for (row_idx, pixel_row) in enumerate(orig_image):
+        for (pix_idx, pixel) in enumerate(pixel_row):
+            new_image[row_idx][pix_idx] = perturb_func(args, {"pixel":pixel, "row_idx":row_idx, "pix_idx":pix_idx})
 
-    for original_image_folder in perturbed_images:
-        #from that folder, find the first image
-        image_index = 0
+def salt_and_pepper(original_image, modifier):
+    new_image = random_noise(original_image, mode="s&p", amount=modifier)
+    return new_image
+    
+def occlude(original_image, modifier):
+    # set a random number to be the starting point for an occlusion square
+    occlusion_index = [0,0]
+    occlusion_index[0] = random.randrange(0, 48)
+    occlusion_index[1] = random.randrange(0, 48)
 
-        for original_image in original_image_folder:
-            #from that image, get the first row of pixels
-            index = [0,0]
-            
-            if modification == 'sap':
-                # new_image = random_noise(original, var=sigma**2) // taking a guess at how to fix this line
-                new_image = random_noise(original_image, mode="s&p", amount=sap_amount)
-            else:
-                #If occlusion, set a random number to be the starting point for an occlusion square
-                if modification == 'occlude':
-                    occlusion_index = [0,0]
-                    occlusion_index[0] = random.randrange(0, 48)
-                    occlusion_index[1] = random.randrange(0, 48)
+    new_image = np.zeros([48, 48])
+    loop_pixels(original_image, new_image, occlude_image, {"modifier":modifier, "occ_idx":occlusion_index})
+    return new_image
 
-                #Image template container
-                new_image = np.zeros([48, 48])
+def modify_contrast(original_image, modifier):
+    new_image = np.zeros([48, 48])
+    loop_pixels(original_image, new_image, contrast_pixel, {"modifier":modifier})
+    return new_image
 
-                for pixel_row in original_image:
-                    #from that row, get the first pixel and apply the transformation
-                    index[1] = 0
+def modify_brightness(original_image, modifier):
+    new_image = np.zeros([48, 48])
+    loop_pixels(original_image, new_image, modify_pixel_brightness, {"modifier":modifier})
+    return new_image
 
-                    for pixel in pixel_row:
-                        if modification == 'scale':                       
-                            applied_value = gaussian_noise(modification_index)
-                            new_image[index[0]][index[1]] = pixel + applied_value
-                        elif modification == 'contrast_up' or modification == 'contrast_down':
-                            new_image[index[0]][index[1]] = contrast_pixel(modification_index, pixel)
-                        elif modification == 'brightness_up' or modification == 'brightness_down':
-                            new_image[index[0]][index[1]] = modify_brightness(modification, modification_index, pixel)
-                        elif modification == 'occlude':
-                            new_image[index[0]][index[1]] = occlude_image(modification_index, occlusion_index, original_image, \
-                            index[0], index[1], pixel)
-                        index[1] += 1
+def scale(original_image, modifier):
+    new_image = np.zeros([48, 48])
+    loop_pixels(original_image, new_image, gaussian_noise, {"modifier":modifier})
+    return new_image
 
-                index[0] += 1
-            if modification == 'scale':
-                noise_perturbed_images[folder_index][image_index] = new_image
-            elif modification == 'contrast_up':
-                contrast_up_perturbed_images[folder_index][image_index] = new_image
-            elif modification == 'contrast_down':
-                contrast_down_perturbed_images[folder_index][image_index] = new_image
-            elif modification == 'brightness_up':
-                brightness_up_perturbed_images[folder_index][image_index] = new_image
-            elif modification == 'brightness_down':
-                brightness_down_perturbed_images[folder_index][image_index] = new_image
-            elif modification == 'occlude':
-                occlusion_perturbed_images[folder_index][image_index] = new_image
-            elif modification == 'sap':
-                sp_perturbed_images[folder_index][image_index] = new_image
-            image_index += 1
-
-        folder_index += 1
+# clean images = copy of original images, perturb fun = function to perturb image with, perturbed_images = list to put modified images in, modifier = modifier value
+def loop_all_images(clean_images, perturb_func, perturbed_images, modifier):
+    for (f_idx, orig_image_folder) in enumerate(clean_images):
+        for (im_idx, orig_image) in enumerate(orig_image_folder):
+            new_image = perturb_func(orig_image, modifier)
+            perturbed_images[f_idx][im_idx] = new_image
 
 
 def robustness_exploration():
@@ -161,11 +137,12 @@ def robustness_exploration():
     #Get new image container for operations to be conducted
     perturbed_images = copy.deepcopy(test_images)
     
-
     #Gaussian pixel noise specific variables
     #Storage for all noise perturbed images at every scale specified in the coursework brief
     scales = [0,2,4,6,8,10,12,14,16,18]
     noise_perturbed_images = list(copy.deepcopy(perturbed_images) for i in range(len(scales)))
+    # noise_perturb(list(copy.deepcopy(perturbed_images) for i in range(len(scales))))
+
 
     #Contrast increase/decrease specific variables
     contrast_multipliers_up = [1.0, 1.03, 1.06, 1.09, 1.12, 1.15, 1.18, 1.21, 1.24, 1.27]
@@ -178,10 +155,6 @@ def robustness_exploration():
     brightness_down_perturbed_images = list(copy.deepcopy(perturbed_images) for i in range(len(scales)))
     brightness_up_perturbed_images = list(copy.deepcopy(perturbed_images) for i in range(len(scales)))
 
-    #occlusion increase specific variables
-    occlusion_box_size = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45]
-    occlusion_perturbed_images = list(copy.deepcopy(perturbed_images) for i in range(len(scales)))
-
     #Salt and Pepper specific variables
     sp_intensity = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]
     sp_perturbed_images = list(copy.deepcopy(perturbed_images) for i in range(len(scales)))
@@ -192,9 +165,9 @@ def robustness_exploration():
 
     #For every scale to apply gaussian noise at
     for scale in scales:
-        loop_all_images('scale', scale)
+        # loop_all_images('scale', scale)
         #Start with the first folder
-        #folder_index = 0
+        folder_index = 0
         #for original_image_folder in perturbed_images:
         #    #from that folder, find the first image
         #    image_index = 0
