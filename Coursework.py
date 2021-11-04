@@ -5,12 +5,13 @@ from matplotlib import pyplot
 import PIL
 from PIL import Image
 import os
-from os import listdir
+from os import getlogin, listdir
 import numpy as np
 from numpy import random
 import copy
 # %matplotlib inline
 from skimage.util import random_noise
+import dlib
 
 #os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
@@ -60,7 +61,7 @@ def modify_pixel_brightness(args, pixel):
     m_value = clip_pixel(m_value)
     return m_value
 
-def occlude_image(args, pix):
+def occlude_pixel(args, pix):
     current_loc = [pix["row_idx"], pix["pix_idx"]]
     m_value = pix["pixel"]
     modifier = occlusion_box_size[args["modifier"]] # I am not quite sure what this is meant to be, I can't find any ref to it in your code
@@ -93,7 +94,7 @@ def occlude(original_image, modifier):
     occlusion_index[1] = random.randrange(0, 48)
 
     new_image = np.zeros([48, 48])
-    loop_pixels(original_image, new_image, occlude_image, {"modifier":modifier, "occ_idx":occlusion_index})
+    loop_pixels(original_image, new_image, occlude_pixel, {"modifier":modifier, "occ_idx":occlusion_index})
     return new_image
 
 def modify_contrast(original_image, modifier):
@@ -189,11 +190,34 @@ def robustness_exploration():
         #        image_index += 1
         #    folder_index += 1#
 
+def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")):
+    detector = dlib.get_frontal_face_detector()
+
+    processed = list()
+
+    for i in imgs:
+        processed_images = list()
+        for j in i:
+            dets = detector(j, 2)
+            if (len(dets) != 1):
+                continue
+            shape = predictor(j, dets[0])
+            if len(shape.parts()) != 68:
+                continue
+            processed_images.append(shape.parts())
+        processed.append(processed_images)
+    
+    return processed
+
+
+
+
 
 if __name__ == "__main__":
-    robustness_exploration()
-
-#develop feature descriptor using historgram of gradients with dlib
+    # robustness_exploration()
+    training_images = load_images('train/')
+    result = get_all_image_landmarks(training_images)
+    print("done")
 
 #Implement SVM
 
