@@ -367,6 +367,7 @@ def resnet():
 ### https://stanford.edu/~shervine/blog/pytorch-how-to-generate-data-parallel
 ### https://pytorch.org/hub/pytorch_vision_resnet/
 ### https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html
+### https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
 
 ############################################################### not my code in above section
 
