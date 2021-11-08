@@ -1,3 +1,18 @@
+from __future__ import print_function
+from __future__ import division
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import torchvision
+from torchvision import datasets, models, transforms
+import matplotlib.pyplot as plt
+import time
+import os
+import copy
+
+############################################################
+
 import torch
 import torchvision
 from matplotlib import image
@@ -7,7 +22,7 @@ from PIL import Image
 import os
 from os import getlogin, listdir
 import numpy as np
-from numpy import random
+from numpy import random, singlecomplex
 import copy
 # %matplotlib inline
 from skimage.util import random_noise
@@ -190,9 +205,9 @@ def robustness_exploration():
         #        image_index += 1
         #    folder_index += 1#
 
+# URL of model: http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
 def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")):
     detector = dlib.get_frontal_face_detector()
-
     processed = list()
 
     for i in imgs:
@@ -209,15 +224,160 @@ def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predicto
     
     return processed
 
+##################################not my code in this section
+from torchvision import transforms
+
+def test_model(model):
+    input_image = Image.open("Test_img.jpg")
+
+    # if (input_image.mode != "RGB"):
+    #     input_image = input_image.convert("RGB")
+
+    preprocess = transforms.Compose([
+        transforms.Lambda(lambda x : x.convert("RGB")),
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    input_tensor = preprocess(input_image)
+    input_batch = input_tensor.unsqueeze(0)
+
+    if torch.cuda.is_available():
+        input_batch = input_batch.to("cuda")
+        model.to("cuda")
+        print("Cuda activated")
+
+    with torch.no_grad():
+        output = model(input_batch)
+    
+    print(output[0])
+
+    probabilities = torch.nn.functional.softmax(output[0], dim=0)
+    print(probabilities)
+
+    # top5_prob, top5_catid = torch.topk(probabilities, 7)
+    # for i in range(top5_prob.size(0)):
+    #     print(labels[top5_catid[i]], top5_prob[i].item())
 
 
+## this is teh fuynction that decides what to newly train adn what not to - currently freezes everything currently in network I think?
+def set_parameter_requires_grad(model, feature_extracting):
+    if feature_extracting:
+        for param in model.parameters():
+            param.requires_grad = False   
+
+
+def train_model(model, dataloaders, criterion, optimizer, num_epochs=32, is_inception=False):
+    since = time.time()
+
+    val_acc_history = []
+
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):
+        print("Epoch {}/{}".format(epoch, num_epochs))
+        print("-" * 10)
+
+        for phase in ['train', 'val']:
+            if phase == "train":
+                model.train()
+            else:
+                model.eval()
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            for inputs, labels in dataloaders[phase]:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                optimizer.zero_grad()
+
+                with torch.set_grad_enabled(phase == "train"):
+                    if is_inception and phase == "train":
+                        outputs, aux_outputs = model(inputs)
+                        loss1 = criterion(outputs, labels)
+                        loss2 = criterion(aux_outputs, labels)
+                        loss = loss1 + 0.4*loss2
+                    else:
+                        outputs = model(inputs)
+                        loss = criterion(outputs, labels)
+
+                    _, preds = torch.max(outputs, 1)
+
+                    if phase == "train": 
+                        loss.backward()
+                        optimizer.step()
+
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds.sum(preds == labels.data))
+
+            epoch_loss = running_loss / len(dataloaders[phase].dataset)
+            epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
+
+            print("{} Loss: {:.4f} Acc: {:.4f}".format(phase, epoch_loss, epoch_acc))
+
+            if phase == "val" and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+            if phase == "val":
+                val_acc_history.append(epoch_acc)
+
+        print()
+
+    time_elapsed = time.time() - since
+
+    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    model.load_state_dict(best_model_wts)
+    return model, val_acc_history
+
+
+def get_resnet_model():
+    model = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True) ## is a 1000 output net as it was trained as 1000 image classifier
+    model.eval()    
+    return model
+
+def freeze_layers(model):
+    for layer in model.parameters():
+        layer.requires_grad = False
+
+def add_new_layers(model):
+    model.fc = torch.nn.Linear(512, len(labels))
+
+def resnet():
+    model = get_resnet_model()
+    freeze_layers(model)
+    add_new_layers(model)
+
+
+
+
+
+    if torch.cuda.is_available():
+        input_batch = input_batch.to("cuda")
+        model.to("cuda")
+        print("Cuda activated")
+
+### https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
+### https://stanford.edu/~shervine/blog/pytorch-how-to-generate-data-parallel
+### https://pytorch.org/hub/pytorch_vision_resnet/
+### https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html
+
+############################################################### not my code in above section
 
 
 if __name__ == "__main__":
     # robustness_exploration()
-    training_images = load_images('train/')
-    result = get_all_image_landmarks(training_images)
-    print("done")
+    # training_images = load_images('train/')
+    # result = get_all_image_landmarks(training_images)
+    # print("done")
+
+    test_model(get_resnet_model())
 
 #Implement SVM
 
