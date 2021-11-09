@@ -1,5 +1,6 @@
 test/
 train/
+results/
 *.dat
 __pycache__/
 *.jpg
