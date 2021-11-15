@@ -1,27 +1,25 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.optim import optimizer
-import torchvision
-from torchvision import datasets, models, transformers
-import matplotlib.pyplot as plt
 from matplotlib import image
-from matplotlib import pyplot
-import PIL
 from PIL import Image
 import os
-from os import getlogin, listdir, pardir
+from os import listdir
 import numpy as np
-from numpy import random, append, singlecomplex
+from numpy import random
 import copy
-# %matplotlib inline
 from skimage.util import random_noise
 import dlib
 import random as Rand
-import time
-import cv2
-import math
+from torchvision import transforms
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
  
+#Common labels
+labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+
+########################################################################################################################################
+## Image manipulation stuff
+
 #Storage for all noise perturbed images at every scale specified in the coursework brief
 scales = [0,2,4,6,8,10,12,14,16,18]
 #Contrast increase/decrease specific variables
@@ -36,8 +34,6 @@ occlusion_box_size = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45]
 sp_intensity = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]
 #Gaussian Blur variables
 blur_sd = [0,1,2,3,4,5,6,7,8,9]
-#Common labels
-labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
 #Load in all images in a path
 def load_images(path): 
@@ -277,26 +273,6 @@ class Image_Manipulator():
                 image_index += 1
             folder_index += 1
 
-        
-# URL of model: http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
-def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")):
-    detector = dlib.get_frontal_face_detector()
-    processed = list()
-
-    for i in imgs:
-        processed_images = list()
-        for j in i:
-            dets = detector(j, 2)
-            if (len(dets) != 1):
-                continue
-            shape = predictor(j, dets[0])
-            if len(shape.parts()) != 68:
-                continue
-            processed_images.append(shape.parts())
-        processed.append(processed_images)
-    
-    return processed
-
 def robustness_exploration():
     #Initialise an image manipulator (set to false if images already made on device)
     manipulator = Image_Manipulator(False)
@@ -341,25 +317,6 @@ def robustness_exploration():
     #pyplot.show()
 
 
-#def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")):
-#    detector = dlib.get_frontal_face_detector()
-#
-#    processed = list()#
-#
-#    for i in imgs:
-#        processed_images = list()
-#        for j in i:
-#            dets = detector(j, 2)
-#            if (len(dets) != 1):
-#                continue
-#            shape = predictor(j, dets[0])
-#            if len(shape.parts()) != 68:
-#                continue
-#            processed_images.append(shape.parts())
-#        processed.append(processed_images)
-#    
-#    return processed
-
 
 def convolution(image, kernel, average=False):
     image_row, image_col = image.shape
@@ -395,15 +352,41 @@ def gaussian_blur(image, modifier):
         convolved_image = convolution(convolved_image, kernel, average=True)
     return convolved_image
  
+#################################################################################################################################################
+
+################################################################################################################################################
+#DLIB STUFF
+
+# URL of model: http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
+#def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")):
+#    detector = dlib.get_frontal_face_detector()
+#
+#    processed = list()#
+#
+#    for i in imgs:
+#        processed_images = list()
+#        for j in i:
+#            dets = detector(j, 2)
+#            if (len(dets) != 1):
+#                continue
+#            shape = predictor(j, dets[0])
+#            if len(shape.parts()) != 68:
+#                continue
+#            processed_images.append(shape.parts())
+#        processed.append(processed_images)
+#    
+#    return processed
+
+##################################################################################################################################################
+
+##################################################################################################################################################
+##RESNET SECTION
+
 ### https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
 ### https://stanford.edu/~shervine/blog/pytorch-how-to-generate-data-parallel
 ### https://pytorch.org/hub/pytorch_vision_resnet/
 ### https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html
 ### https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
-
-from torchvision import transforms
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
 
 label_map = {'angry':0, 'disgust':1, 'fear':2, 'happy':3, 'neutral':4, 'sad':5, 'surprise':6}
 my_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -518,9 +501,11 @@ def resnet():
 
     train_model(model, train_dataloader, 20)
 
+################################################################################################################################################################
 
 if __name__ == "__main__":
     robustness_exploration()
+    # resnet()
     #training_images = load_images('train/')
     #result = get_all_image_landmarks(training_images)
     print("done")
