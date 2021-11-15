@@ -1,7 +1,10 @@
-
-
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim import optimizer
 import torchvision
+from torchvision import datasets, models, transformers
+import matplotlib.pyplot as plt
 from matplotlib import image
 from matplotlib import pyplot
 import PIL
@@ -9,13 +12,13 @@ from PIL import Image
 import os
 from os import getlogin, listdir, pardir
 import numpy as np
-from numpy import append, random
+from numpy import random, append, singlecomplex
 import copy
 # %matplotlib inline
 from skimage.util import random_noise
 import dlib
 import random as Rand
-
+import time
 import cv2
 import math
  
@@ -259,8 +262,7 @@ class Image_Manipulator():
     def loop_all_images(self, clean_images, perturb_func, perturbed_images, modifier, path):
         image_index = 0
         folder_index = 0
-
-
+        
         for image_folder in clean_images:
             image_index = 0
 
@@ -276,9 +278,26 @@ class Image_Manipulator():
             folder_index += 1
 
         
+# URL of model: http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
+def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")):
+    detector = dlib.get_frontal_face_detector()
+    processed = list()
+
+    for i in imgs:
+        processed_images = list()
+        for j in i:
+            dets = detector(j, 2)
+            if (len(dets) != 1):
+                continue
+            shape = predictor(j, dets[0])
+            if len(shape.parts()) != 68:
+                continue
+            processed_images.append(shape.parts())
+        processed.append(processed_images)
+    
+    return processed
 
 def robustness_exploration():
-
     #Initialise an image manipulator (set to false if images already made on device)
     manipulator = Image_Manipulator(False)
     test_path = os.getcwd() + "/results/gaussian_noise/"
@@ -342,7 +361,6 @@ def robustness_exploration():
 #    return processed
 
 
-
 def convolution(image, kernel, average=False):
     image_row, image_col = image.shape
     kernel_row, kernel_col = kernel.shape
@@ -377,6 +395,129 @@ def gaussian_blur(image, modifier):
         convolved_image = convolution(convolved_image, kernel, average=True)
     return convolved_image
  
+### https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
+### https://stanford.edu/~shervine/blog/pytorch-how-to-generate-data-parallel
+### https://pytorch.org/hub/pytorch_vision_resnet/
+### https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html
+### https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
+
+from torchvision import transforms
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+
+label_map = {'angry':0, 'disgust':1, 'fear':2, 'happy':3, 'neutral':4, 'sad':5, 'surprise':6}
+my_device = "cuda" if torch.cuda.is_available() else "cpu"
+
+def freeze_layers(model):
+    for layer in model.parameters():
+        layer.requires_grad = False
+
+def add_new_layers(model):
+    model.fc = torch.nn.Linear(512, len(labels))
+
+def get_resnet_model():
+    model = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True) ## is a 1000 output net as it was trained as 1000 image classifier
+    return model
+
+def flat_load_images(dir="train/"):
+    #Primary image container
+    my_images = []
+    my_labels = []
+
+    for label in labels:
+        #Iterate each folder and add the corresponding images
+        for filename in listdir(dir + label):
+            my_im = Image.open(dir + label + '/' + filename)
+            my_images.append(my_im.copy())
+            my_labels.append(label)
+            my_im.close()
+    #Return the images and corresponding labels
+    return my_images, my_labels
+
+
+class CustomDataset(Dataset):
+    def __init__(self, dir, transform):
+        images, labels = flat_load_images(dir)
+        self.transform = transform
+        self.img_labels = labels
+        self.my_images = images
+
+    def __len__(self):
+        return len(self.img_labels)
+
+    def __getitem__(self, idx):
+        if self.transform:
+            image = self.transform(self.my_images[idx])
+        else:
+            image = self.my_images[idx]
+
+        label = self.img_labels[idx]
+
+        return image, label_map[label] 
+        
+
+def get_dataloaders():
+
+    preprocess = transforms.Compose([
+        transforms.Lambda(lambda x : x.convert("RGB")),
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    train_dataset = CustomDataset("train/", preprocess)
+    test_dataset = CustomDataset("test/", preprocess)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False) # no need to shuffle test data
+
+    return train_dataloader, test_dataloader
+
+def train_model(model, dataloader, epochs=10):
+    model.train() # set model to training mode
+    model.to(my_device) # send model to device
+
+    learning_layers = list() # get the layers that are not to be "frozen"
+    for name, layer in model.named_parameters():
+        if layer.requires_grad:
+            learning_layers.append(layer)
+            print("Training layer: ", name)
+    
+    loss_func = nn.CrossEntropyLoss()
+    optimizer_func = torch.optim.SGD(learning_layers, lr=1e-3)
+
+    best_loss = 10000
+    best_weights = copy.deepcopy(model.state_dict())
+
+    for epoch in range(epochs):
+        for batch_num, (X, y) in enumerate(dataloader):
+            X, y = X.to(my_device), y.to(my_device)
+
+            prediction = model(X)
+            loss = loss_func(prediction, y)
+
+            optimizer_func.zero_grad()
+            loss.backward()
+            optimizer_func.step()
+        
+        print(f"Epoch: {epoch}, loss: {loss:>7f}")
+
+        if loss < best_loss:
+            best_loss = loss
+            best_weights = copy.deepcopy(model.state_dict())
+        
+    torch.save(best_weights, f"model_loss_{best_loss}.pth")
+
+def resnet():
+    model = get_resnet_model()
+    freeze_layers(model)
+    add_new_layers(model)
+
+    train_dataloader, test_dataloader = get_dataloaders()
+
+    train_model(model, train_dataloader, 20)
+
 
 if __name__ == "__main__":
     robustness_exploration()
@@ -385,5 +526,3 @@ if __name__ == "__main__":
     print("done")
 
 #Implement SVM
-
-#Implement Resnet18
