@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from torch.optim import optimizer
 import torchvision
 from torchvision import datasets, models, transforms
 import matplotlib.pyplot as plt
@@ -33,8 +34,7 @@ import dlib
 #Load all of training and testing into arrays
 
 #Common labels
-labels = ['angry', 'disgust', 'fear',
-                   'happy', 'neutral', 'sad', 'surprise']
+labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
 #Load in all images in a path
 def load_images(path): 
@@ -224,14 +224,68 @@ def get_all_image_landmarks(imgs, predictor=dlib.shape_predictor("shape_predicto
     
     return processed
 
-##################################not my code in this section
+### https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
+### https://stanford.edu/~shervine/blog/pytorch-how-to-generate-data-parallel
+### https://pytorch.org/hub/pytorch_vision_resnet/
+### https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html
+### https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
+
 from torchvision import transforms
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 
-def test_model(model):
-    input_image = Image.open("Test_img.jpg")
+label_map = {'angry':0, 'disgust':1, 'fear':2, 'happy':3, 'neutral':4, 'sad':5, 'surprise':6}
+my_device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # if (input_image.mode != "RGB"):
-    #     input_image = input_image.convert("RGB")
+def freeze_layers(model):
+    for layer in model.parameters():
+        layer.requires_grad = False
+
+def add_new_layers(model):
+    model.fc = torch.nn.Linear(512, len(labels))
+
+def get_resnet_model():
+    model = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True) ## is a 1000 output net as it was trained as 1000 image classifier
+    return model
+
+def flat_load_images(dir="train/"):
+    #Primary image container
+    my_images = []
+    my_labels = []
+
+    for label in labels:
+        #Iterate each folder and add the corresponding images
+        for filename in listdir(dir + label):
+            my_im = Image.open(dir + label + '/' + filename)
+            my_images.append(my_im.copy())
+            my_labels.append(label)
+            my_im.close()
+    #Return the images and corresponding labels
+    return my_images, my_labels
+
+
+class CustomDataset(Dataset):
+    def __init__(self, dir, transform):
+        images, labels = flat_load_images(dir)
+        self.transform = transform
+        self.img_labels = labels
+        self.my_images = images
+
+    def __len__(self):
+        return len(self.img_labels)
+
+    def __getitem__(self, idx):
+        if self.transform:
+            image = self.transform(self.my_images[idx])
+        else:
+            image = self.my_images[idx]
+
+        label = self.img_labels[idx]
+
+        return image, label_map[label] 
+        
+
+def get_dataloaders():
 
     preprocess = transforms.Compose([
         transforms.Lambda(lambda x : x.convert("RGB")),
@@ -241,135 +295,57 @@ def test_model(model):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    input_tensor = preprocess(input_image)
-    input_batch = input_tensor.unsqueeze(0)
+    train_dataset = CustomDataset("train/", preprocess)
+    test_dataset = CustomDataset("test/", preprocess)
 
-    if torch.cuda.is_available():
-        input_batch = input_batch.to("cuda")
-        model.to("cuda")
-        print("Cuda activated")
+    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False) # no need to shuffle test data
 
-    with torch.no_grad():
-        output = model(input_batch)
+    return train_dataloader, test_dataloader
+
+def train_model(model, dataloader, epochs=10):
+    model.train() # set model to training mode
+    model.to(my_device) # send model to device
+
+    learning_layers = list() # get the layers that are not to be "frozen"
+    for name, layer in model.named_parameters():
+        if layer.requires_grad:
+            learning_layers.append(layer)
+            print("Training layer: ", name)
     
-    print(output[0])
+    loss_func = nn.CrossEntropyLoss()
+    optimizer_func = torch.optim.SGD(learning_layers, lr=1e-3)
 
-    probabilities = torch.nn.functional.softmax(output[0], dim=0)
-    print(probabilities)
+    best_loss = 10000
+    best_weights = copy.deepcopy(model.state_dict())
 
-    # top5_prob, top5_catid = torch.topk(probabilities, 7)
-    # for i in range(top5_prob.size(0)):
-    #     print(labels[top5_catid[i]], top5_prob[i].item())
+    for epoch in range(epochs):
+        for batch_num, (X, y) in enumerate(dataloader):
+            X, y = X.to(my_device), y.to(my_device)
 
+            prediction = model(X)
+            loss = loss_func(prediction, y)
 
-## this is teh fuynction that decides what to newly train adn what not to - currently freezes everything currently in network I think?
-def set_parameter_requires_grad(model, feature_extracting):
-    if feature_extracting:
-        for param in model.parameters():
-            param.requires_grad = False   
+            optimizer_func.zero_grad()
+            loss.backward()
+            optimizer_func.step()
+        
+        print(f"Epoch: {epoch}, loss: {loss:>7f}")
 
-
-def train_model(model, dataloaders, criterion, optimizer, num_epochs=32, is_inception=False):
-    since = time.time()
-
-    val_acc_history = []
-
-    best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = 0.0
-
-    for epoch in range(num_epochs):
-        print("Epoch {}/{}".format(epoch, num_epochs))
-        print("-" * 10)
-
-        for phase in ['train', 'val']:
-            if phase == "train":
-                model.train()
-            else:
-                model.eval()
-
-            running_loss = 0.0
-            running_corrects = 0
-
-            for inputs, labels in dataloaders[phase]:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-
-                optimizer.zero_grad()
-
-                with torch.set_grad_enabled(phase == "train"):
-                    if is_inception and phase == "train":
-                        outputs, aux_outputs = model(inputs)
-                        loss1 = criterion(outputs, labels)
-                        loss2 = criterion(aux_outputs, labels)
-                        loss = loss1 + 0.4*loss2
-                    else:
-                        outputs = model(inputs)
-                        loss = criterion(outputs, labels)
-
-                    _, preds = torch.max(outputs, 1)
-
-                    if phase == "train": 
-                        loss.backward()
-                        optimizer.step()
-
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds.sum(preds == labels.data))
-
-            epoch_loss = running_loss / len(dataloaders[phase].dataset)
-            epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
-
-            print("{} Loss: {:.4f} Acc: {:.4f}".format(phase, epoch_loss, epoch_acc))
-
-            if phase == "val" and epoch_acc > best_acc:
-                best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.state_dict())
-            if phase == "val":
-                val_acc_history.append(epoch_acc)
-
-        print()
-
-    time_elapsed = time.time() - since
-
-    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-    print('Best val Acc: {:4f}'.format(best_acc))
-
-    model.load_state_dict(best_model_wts)
-    return model, val_acc_history
-
-
-def get_resnet_model():
-    model = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True) ## is a 1000 output net as it was trained as 1000 image classifier
-    model.eval()    
-    return model
-
-def freeze_layers(model):
-    for layer in model.parameters():
-        layer.requires_grad = False
-
-def add_new_layers(model):
-    model.fc = torch.nn.Linear(512, len(labels))
+        if loss < best_loss:
+            best_loss = loss
+            best_weights = copy.deepcopy(model.state_dict())
+        
+    torch.save(best_weights, f"model_loss_{best_loss}.pth")
 
 def resnet():
     model = get_resnet_model()
     freeze_layers(model)
     add_new_layers(model)
 
+    train_dataloader, test_dataloader = get_dataloaders()
 
-
-
-
-    if torch.cuda.is_available():
-        input_batch = input_batch.to("cuda")
-        model.to("cuda")
-        print("Cuda activated")
-
-### https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
-### https://stanford.edu/~shervine/blog/pytorch-how-to-generate-data-parallel
-### https://pytorch.org/hub/pytorch_vision_resnet/
-### https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html
-### https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
-
-############################################################### not my code in above section
+    train_model(model, train_dataloader, 20)
 
 
 if __name__ == "__main__":
@@ -378,7 +354,8 @@ if __name__ == "__main__":
     # result = get_all_image_landmarks(training_images)
     # print("done")
 
-    test_model(get_resnet_model())
+    # test_model(get_resnet_model())
+    resnet()
 
 #Implement SVM
 

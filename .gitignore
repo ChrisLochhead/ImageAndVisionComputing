@@ -3,3 +3,4 @@ train/
 *.dat
 __pycache__/
 *.jpg
+*.pth
