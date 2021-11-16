@@ -13,6 +13,7 @@ import random as Rand
 from torchvision import transforms
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
+from multiprocessing import Process
  
 #Common labels
 labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
@@ -202,6 +203,7 @@ class Image_Manipulator():
         self.loop_all_images(self.test_images, perturb_func, location, \
         modifier_type, os.getcwd() + path_folder)
 
+
     def initialise_permutations(self):
         #For each of the 8 mutations, starting with gaussian noise 
         #If the first results are missing, initialise all results folders
@@ -217,40 +219,100 @@ class Image_Manipulator():
 
         #Iterate through all modifications and all modification settings, save and store all
         #resulting images for reloading later.
-    
-        for scale_modifier in scales:
-            self.create_perturbed_images("/results/gaussian_noise/" + str(scale_modifier),
-             scale_modifier, self.noise_perturbed_images, scale)
-        print("scale done")
-        for contrast_mod in contrast_multipliers_up:
-            self.create_perturbed_images("/results/contrast_up/" + str(contrast_mod),
-             contrast_mod, self.contrast_up_perturbed_images, modify_contrast)
-        print("contrast done")
-        for contrast_mod in contrast_multipliers_down:
-            self.create_perturbed_images("/results/contrast_down/" + str(contrast_mod),
-             contrast_mod, self.contrast_down_perturbed_images, modify_contrast)
-        print("contrast done")
-        for brightness_mod in brightness_modifiers_up:
-            self.create_perturbed_images("/results/brightness_up/" + str(brightness_mod),
-             brightness_mod, self.brightness_up_perturbed_images, modify_brightness)
-        print("brightness done")
-        for brightness_mod in brightness_modifiers_down:
-            self.create_perturbed_images("/results/brightness_down/" + str(brightness_mod),
-             brightness_mod, self.brightness_down_perturbed_images, modify_brightness)
-        print("brightness done")
-        for occlusion_mod in occlusion_box_size:
-            self.create_perturbed_images("/results/occlusion/" + str(occlusion_mod),
-             occlusion_mod, self.occlusion_perturbed_images, occlude)
-        print("occlusion done")
-        for sp_mod in sp_intensity:
-            self.create_perturbed_images("/results/salt_and_pepper/" + str(sp_mod),
-             sp_mod, self.sp_perturbed_images, salt_and_pepper)
-        print("salt and pepper done")
-        for blur_mod in blur_sd:
-            self.create_perturbed_images("/results/gaussian_blur/" + str(blur_mod),
-             blur_mod, self.blur_perturbed_images, gaussian_blur)
 
-        print("all images completed.")
+        processes = []
+        for scale_modifier in scales:
+            p = Process(target=self.create_perturbed_images, args=("/results/gaussian_noise/" + str(scale_modifier), scale_modifier, self.noise_perturbed_images, scale))
+            p.start()
+            processes.append(p)
+            print("Starting scale process")
+
+        for procs in processes:
+            procs.join()
+        print("scale done")
+
+        processes = []
+        for contrast_mod in contrast_multipliers_up:
+            p = Process(target=self.create_perturbed_images, args=("/results/contrast_up/" + str(contrast_mod), contrast_mod, self.contrast_up_perturbed_images, modify_contrast))
+            p.start()
+            processes.append(p)
+            print("Starting Contrast up process")
+
+        for procs in processes:
+            procs.join()
+        print("Contrast up done")
+
+        processes = []
+        for contrast_mod in contrast_multipliers_down:
+            p = Process(target=self.create_perturbed_images, args=("/results/contrast_down/" + str(contrast_mod), contrast_mod, self.contrast_down_perturbed_images, modify_contrast))
+            p.start()
+            processes.append(p)
+            print("Starting Contrast down process")
+
+        for procs in processes:
+            procs.join()
+        print("Contrast down done")
+
+        processes = []
+        for brightness_mod in brightness_modifiers_up:
+            p = Process(target=self.create_perturbed_images, args=("/results/brightness_up/" + str(brightness_mod), brightness_mod, self.brightness_up_perturbed_images, modify_brightness))
+            p.start()
+            processes.append(p)
+            print("Starting brightness up process")
+
+        for procs in processes:
+            procs.join()
+        print("Brightness up done")
+
+
+        processes = []
+        for brightness_mod in brightness_modifiers_down:
+            p = Process(target=self.create_perturbed_images, args=("/results/brightness_down/" + str(brightness_mod), brightness_mod, self.brightness_down_perturbed_images, modify_brightness))
+            p.start()
+            processes.append(p)
+            print("Starting brightness down process")
+
+        for procs in processes:
+            procs.join()
+        print("Brightness down done")
+
+        processes = []
+        for occlusion_mod in occlusion_box_size:
+            p = Process(target=self.create_perturbed_images, args=("/results/occlusion/" + str(occlusion_mod), occlusion_mod, self.occlusion_perturbed_images, occlude))
+            p.start()
+            processes.append(p)
+            print("Starting occlusion process")
+
+        for procs in processes:
+            procs.join()
+        print("occlusion done")
+
+
+        processes = []
+        for sp_mod in sp_intensity:
+            p = Process(target=self.create_perturbed_images, args=("/results/salt_and_pepper/" + str(sp_mod), sp_mod, self.sp_perturbed_images, salt_and_pepper))
+            p.start()
+            processes.append(p)
+            print("Starting sp process")
+
+        for procs in processes:
+            procs.join()
+        print("sp done")
+
+
+        processes = []
+        for blur_mod in blur_sd:
+            p = Process(target=self.create_perturbed_images, args=("/results/gaussian_blur/" + str(blur_mod), blur_mod, self.blur_perturbed_images, gaussian_blur))
+            p.start()
+            processes.append(p)
+            print("Starting blur process")
+
+        for procs in processes:
+            procs.join()
+        print("blur done")
+
+
+        print("all images generated.")
 
 
 
@@ -276,8 +338,8 @@ class Image_Manipulator():
 def robustness_exploration():
     #Initialise an image manipulator (set to false if images already made on device)
     manipulator = Image_Manipulator(False)
-    test_path = os.getcwd() + "/results/gaussian_noise/"
-    manipulator.get_images(test_path)
+    # test_path = os.getcwd() + "/results/gaussian_noise/"
+    # manipulator.get_images(test_path)
 
     #Test the modifications
     #Gaussian noise
@@ -508,6 +570,6 @@ if __name__ == "__main__":
     # resnet()
     #training_images = load_images('train/')
     #result = get_all_image_landmarks(training_images)
-    print("done")
+    # print("done")
 
 #Implement SVM
