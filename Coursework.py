@@ -10,10 +10,12 @@ import copy
 from skimage.util import random_noise
 import dlib
 import random as Rand
-from torchvision import transforms
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+# from torchvision import transforms
+import torchvision.transforms as T
+from torch.utils.data import Dataset, DataLoader, random_split
 from multiprocessing import Process
+from tqdm import tqdm
+import math
  
 #Common labels
 labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
@@ -481,7 +483,7 @@ def flat_load_images(dir="train/"):
 
 
 class CustomDataset(Dataset):
-    def __init__(self, dir, transform):
+    def __init__(self, dir, transform=None):
         images, labels = flat_load_images(dir)
         self.transform = transform
         self.img_labels = labels
@@ -501,25 +503,33 @@ class CustomDataset(Dataset):
         return image, label_map[label] 
         
 
-def get_dataloaders():
+def get_dataloaders(validation_ratio=0.2):
 
-    preprocess = transforms.Compose([
-        transforms.Lambda(lambda x : x.convert("RGB")),
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    preprocess = T.Compose([
+        T.Lambda(lambda x : x.convert("RGB")),
+        T.Resize(256),
+        T.CenterCrop(224),
+        T.RandomHorizontalFlip(p=0.5),
+        T.RandomVerticalFlip(p=0.5),
+        T.RandomApply(transforms=[T.RandomRotation(degrees=(0,360))], p=0.5),
+        T.RandomPerspective(distortion_scale=0.5, p=0.5),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    train_dataset = CustomDataset("train/", preprocess)
-    test_dataset = CustomDataset("test/", preprocess)
+    train_dataset = CustomDataset("train/", transform=preprocess)
+    train_dataset, validation_dataset = random_split(train_dataset, [math.ceil(len(train_dataset) * (1-validation_ratio)), math.floor(len(train_dataset) * validation_ratio)])
+
+    test_dataset = CustomDataset("test/")
 
     train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=64, shuffle=False) # no need to shuffle validation data either
     test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False) # no need to shuffle test data
 
-    return train_dataloader, test_dataloader
+    return train_dataloader, validation_dataloader, test_dataloader
 
-def train_model(model, dataloader, epochs=10):
+
+def train_model(model, t_dataloader, v_dataloader, epochs=16):
     model.train() # set model to training mode
     model.to(my_device) # send model to device
 
@@ -536,20 +546,41 @@ def train_model(model, dataloader, epochs=10):
     best_weights = copy.deepcopy(model.state_dict())
 
     for epoch in range(epochs):
-        for batch_num, (X, y) in enumerate(dataloader):
+        model.train()
+        running_training_loss = 0
+        for (X, y) in tqdm(t_dataloader):
             X, y = X.to(my_device), y.to(my_device)
 
             prediction = model(X)
             loss = loss_func(prediction, y)
+            running_training_loss += loss
 
             optimizer_func.zero_grad()
             loss.backward()
             optimizer_func.step()
-        
-        print(f"Epoch: {epoch}, loss: {loss:>7f}")
 
-        if loss < best_loss:
-            best_loss = loss
+        model.eval()
+        num_correct = 0
+        running_val_loss = 0
+        for (X, y) in v_dataloader:
+            X, y = X.to(my_device), y.to(my_device)
+
+            prediction = model(X)
+            loss = loss_func(prediction, y)
+            
+            running_val_loss += loss
+
+            _, predicted_labels = torch.max(prediction, 1)
+            batch_correct = (predicted_labels == y).sum()
+            num_correct += batch_correct
+
+        epoch_val_loss = running_val_loss / len(v_dataloader)
+        epoch_val_acc = num_correct / len(v_dataloader.dataset)
+
+        print(f"Epoch {epoch}: Training Loss: {running_training_loss / len(t_dataloader)}, Validation Loss: {epoch_val_loss}, Validation Accuracy: {epoch_val_acc}")
+
+        if epoch_val_loss < best_loss:
+            best_loss = epoch_val_loss
             best_weights = copy.deepcopy(model.state_dict())
         
     torch.save(best_weights, f"model_loss_{best_loss}.pth")
@@ -559,15 +590,15 @@ def resnet():
     freeze_layers(model)
     add_new_layers(model)
 
-    train_dataloader, test_dataloader = get_dataloaders()
+    train_dataloader, validation_dataloader, test_dataloader = get_dataloaders()
 
-    train_model(model, train_dataloader, 20)
+    train_model(model, train_dataloader, validation_dataloader, 20)
 
 ################################################################################################################################################################
 
 if __name__ == "__main__":
-    robustness_exploration()
-    # resnet()
+    # robustness_exploration()
+    resnet()
     #training_images = load_images('train/')
     #result = get_all_image_landmarks(training_images)
     # print("done")
