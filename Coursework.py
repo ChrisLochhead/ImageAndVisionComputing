@@ -16,7 +16,15 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from multiprocessing import Process
 from tqdm import tqdm
 import math
- 
+import pandas as pd
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report, confusion_matrix
+
+from skimage.feature import hog
+from skimage import data, exposure
+
+
+
 #Common labels
 labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
@@ -340,6 +348,8 @@ class Image_Manipulator():
 def robustness_exploration():
     #Initialise an image manipulator (set to false if images already made on device)
     manipulator = Image_Manipulator(False)
+    SVM_Controller = SVM(manipulator.training_images)
+    SVM_Controller.run_SVM(manipulator.test_images)
     # test_path = os.getcwd() + "/results/gaussian_noise/"
     # manipulator.get_images(test_path)
 
@@ -595,6 +605,44 @@ def resnet():
     train_model(model, train_dataloader, validation_dataloader, 20)
 
 ################################################################################################################################################################
+
+class SVM():       
+    def __init__(self, training_data):
+        self.train = pd.DataFrame.from_records(training_data)
+
+        print("initialising")
+
+        self.X_train = np.array(self.train.drop([0], axis=1))
+        self.y_train = np.array(self.train[0])
+
+        #pass all images through dlib
+
+
+        #pass all images through hog
+
+        
+        print("data retrieved", self.X_train.shape, self.y_train.shape)
+
+        self.SVM = SVC(kernel='linear')
+        print("beginning fit")
+        self.SVM.fit(self.X_train, self.y_train)
+        print("completed sucessfully")
+        return SVM
+
+    def get_HOG_representation(self, image):
+        fd, hog_image = hog(image, orientations=8, pixels_per_cell=(16, 16),
+                    cells_per_block=(1, 1), visualize=True, channel_axis=-1)
+        return hog_image
+
+    def run_SVM(self, testing_data):
+        self.test = pd.DataFrame.from_records(testing_data)
+        self.X_test = [x[0] for x in self.test[1]]
+        self.y_test = self.test[0]
+        y_pred = SVM.predict(self.X_test)
+        print(confusion_matrix(self.y_test,y_pred))
+        print(classification_report(self.y_test,y_pred))
+
+   
 
 if __name__ == "__main__":
     # robustness_exploration()
