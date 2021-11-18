@@ -23,6 +23,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 from skimage.feature import hog
 from skimage import data, exposure
 
+import pickle
 
 
 #Common labels
@@ -469,8 +470,12 @@ def freeze_layers(model):
     for layer in model.parameters():
         layer.requires_grad = False
 
-def add_new_layers(model):
-    model.fc = torch.nn.Linear(512, len(labels))
+def add_new_layers(model, extra_nodes=0):
+    if extra_nodes != 0:
+        model.extra = torch.nn.Linear(512, extra_nodes)
+        model.fc = torch.nn.Linear(extra_nodes, len(labels))
+    else:
+        model.fc = torch.nn.Linear(512, len(labels))
 
 def get_resnet_model():
     model = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True) ## is a 1000 output net as it was trained as 1000 image classifier
@@ -532,14 +537,14 @@ def get_dataloaders(validation_ratio=0.2):
 
     test_dataset = CustomDataset("test/")
 
-    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    validation_dataloader = DataLoader(validation_dataset, batch_size=64, shuffle=False) # no need to shuffle validation data either
-    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False) # no need to shuffle test data
+    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=64, shuffle=False, num_workers=4) # no need to shuffle validation data either
+    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4) # no need to shuffle test data
 
     return train_dataloader, validation_dataloader, test_dataloader
 
 
-def train_model(model, t_dataloader, v_dataloader, epochs=16):
+def train_model(model, t_dataloader, v_dataloader, learn_rate=1e-3, min_val_loss_improvement=0.1, improvement_buffer=5, absolute_max_epochs=64):
     model.train() # set model to training mode
     model.to(my_device) # send model to device
 
@@ -547,15 +552,18 @@ def train_model(model, t_dataloader, v_dataloader, epochs=16):
     for name, layer in model.named_parameters():
         if layer.requires_grad:
             learning_layers.append(layer)
-            print("Training layer: ", name)
+            # print("Training layer: ", name)
     
     loss_func = nn.CrossEntropyLoss()
-    optimizer_func = torch.optim.SGD(learning_layers, lr=1e-3)
+    optimizer_func = torch.optim.SGD(learning_layers, learn_rate)
 
-    best_loss = 10000
+    best_loss = 1e10
     best_weights = copy.deepcopy(model.state_dict())
 
-    for epoch in range(epochs):
+    loss_thresh_epoch = 0
+    running_loss_thresh = 1e10
+
+    for epoch in range(absolute_max_epochs):
         model.train()
         running_training_loss = 0
         for (X, y) in tqdm(t_dataloader):
@@ -593,16 +601,59 @@ def train_model(model, t_dataloader, v_dataloader, epochs=16):
             best_loss = epoch_val_loss
             best_weights = copy.deepcopy(model.state_dict())
         
-    torch.save(best_weights, f"model_loss_{best_loss}.pth")
+        if running_loss_thresh - loss > min_val_loss_improvement:
+            running_loss_thresh = loss
+            loss_thresh_epoch = epoch
+
+        if loss_thresh_epoch - epoch >= improvement_buffer:
+            print(f"Early stopping as no significant improvement in {improvement_buffer} epochs")
+            break
+            
+        
+    # torch.save(best_weights, f"model_loss_{best_loss}.pth")
+
+    return best_weights, best_loss
+
+
+
+def hyper_parameter_search(model, train_dataloader, validation_dataloader):
+
+    extra_layer_nodes = [0, 7, 16, 32, 64, 128]
+    learning_rates = [0.0001, 0.001, 0.01, 0.1]
+
+    best_model = {"best_loss":1e10}
+
+    for ex_layer_nodes in extra_layer_nodes:
+        for learn_rate in learning_rates:
+            print("*" * 10)
+            print(f"Training with {ex_layer_nodes} nodes with {learn_rate} learn rate")
+
+            model_copy = copy.deepcopy(model, ex_layer_nodes)
+            add_new_layers(model_copy)
+
+            w, l = train_model(model_copy, train_dataloader, validation_dataloader, learn_rate, min_val_loss_improvement=0.05)
+
+            if (l < best_model["best_loss"]):
+                best_model["best_loss"] = l
+                best_model["best_weights"] = w
+                best_model["layer_nodes"] = ex_layer_nodes
+                best_model["learn_rate"] = learn_rate
+
+    with open(f"model-{best_model['best_loss']}.pkl", "wb") as f:
+        pickle.dump(best_model, f, pickle.HIGHEST_PROTOCOL)
+
+
 
 def resnet():
     model = get_resnet_model()
     freeze_layers(model)
-    add_new_layers(model)
+    
 
     train_dataloader, validation_dataloader, test_dataloader = get_dataloaders()
 
-    train_model(model, train_dataloader, validation_dataloader, 20)
+    hyper_parameter_search(model, train_dataloader, validation_dataloader)
+
+    # train_model(model, train_dataloader, validation_dataloader, 20)
 
 ################################################################################################################################################################
 
