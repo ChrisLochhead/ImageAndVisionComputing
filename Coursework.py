@@ -472,10 +472,15 @@ def freeze_layers(model):
 
 def add_new_layers(model, extra_nodes=0):
     if extra_nodes != 0:
-        model.extra = torch.nn.Linear(512, extra_nodes)
-        model.fc = torch.nn.Linear(extra_nodes, len(labels))
+        model.fc = torch.nn.Linear(512, extra_nodes)
+        model = nn.Sequential(
+            model,
+            torch.nn.Linear(extra_nodes, len(labels))
+        )
     else:
         model.fc = torch.nn.Linear(512, len(labels))
+
+    return model
 
 def get_resnet_model():
     model = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True) ## is a 1000 output net as it was trained as 1000 image classifier
@@ -537,14 +542,14 @@ def get_dataloaders(validation_ratio=0.2):
 
     test_dataset = CustomDataset("test/")
 
-    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
-    validation_dataloader = DataLoader(validation_dataset, batch_size=64, shuffle=False, num_workers=4) # no need to shuffle validation data either
-    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4) # no need to shuffle test data
+    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=64, shuffle=False) # no need to shuffle validation data either
+    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False) # no need to shuffle test data
 
     return train_dataloader, validation_dataloader, test_dataloader
 
 
-def train_model(model, t_dataloader, v_dataloader, learn_rate=1e-3, min_val_loss_improvement=0.1, improvement_buffer=5, absolute_max_epochs=64):
+def train_model(model, t_dataloader, v_dataloader, learn_rate=1e-3, min_val_loss_improvement=0.1, improvement_buffer=5, absolute_max_epochs=2):
     model.train() # set model to training mode
     model.to(my_device) # send model to device
 
@@ -600,12 +605,15 @@ def train_model(model, t_dataloader, v_dataloader, learn_rate=1e-3, min_val_loss
         if epoch_val_loss < best_loss:
             best_loss = epoch_val_loss
             best_weights = copy.deepcopy(model.state_dict())
+            print("new best loss")
         
-        if running_loss_thresh - loss > min_val_loss_improvement:
-            running_loss_thresh = loss
+        if running_loss_thresh - epoch_val_loss > min_val_loss_improvement:
+            print("Improved by threshold so resetting epoch count")
+            running_loss_thresh = epoch_val_loss
             loss_thresh_epoch = epoch
-
-        if loss_thresh_epoch - epoch >= improvement_buffer:
+        else:
+            print(f"current epoch count {epoch - loss_thresh_epoch}")
+        if epoch - loss_thresh_epoch >= improvement_buffer:
             print(f"Early stopping as no significant improvement in {improvement_buffer} epochs")
             break
             
@@ -625,13 +633,13 @@ def hyper_parameter_search(model, train_dataloader, validation_dataloader):
 
     for ex_layer_nodes in extra_layer_nodes:
         for learn_rate in learning_rates:
-            print("*" * 10)
+            print("*" * 50)
             print(f"Training with {ex_layer_nodes} nodes with {learn_rate} learn rate")
 
-            model_copy = copy.deepcopy(model, ex_layer_nodes)
-            add_new_layers(model_copy)
+            model_copy = copy.deepcopy(model)
+            model_copy = add_new_layers(model_copy, ex_layer_nodes)
 
-            w, l = train_model(model_copy, train_dataloader, validation_dataloader, learn_rate, min_val_loss_improvement=0.05)
+            w, l = train_model(model_copy, train_dataloader, validation_dataloader, learn_rate, min_val_loss_improvement=0.03)
 
             if (l < best_model["best_loss"]):
                 best_model["best_loss"] = l
@@ -639,7 +647,7 @@ def hyper_parameter_search(model, train_dataloader, validation_dataloader):
                 best_model["layer_nodes"] = ex_layer_nodes
                 best_model["learn_rate"] = learn_rate
 
-    with open(f"model-{best_model['best_loss']}.pkl", "wb") as f:
+    with open(f"model-{best_model['best_loss']:.4f}.pkl", "wb") as f: ## remember to load with "rb" flag
         pickle.dump(best_model, f, pickle.HIGHEST_PROTOCOL)
 
 
