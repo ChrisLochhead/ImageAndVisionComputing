@@ -549,7 +549,7 @@ def get_dataloaders(validation_ratio=0.2):
     return train_dataloader, validation_dataloader, test_dataloader
 
 
-def train_model(model, t_dataloader, v_dataloader, learn_rate=1e-3, min_val_loss_improvement=0.1, improvement_buffer=5, absolute_max_epochs=2):
+def train_model(model, t_dataloader, v_dataloader, learn_rate=1e-3, min_val_loss_improvement=0.1, improvement_buffer=5, absolute_max_epochs=25):
     model.train() # set model to training mode
     model.to(my_device) # send model to device
 
