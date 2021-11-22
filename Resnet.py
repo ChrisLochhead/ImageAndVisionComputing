@@ -266,6 +266,7 @@ def resnet_test(path):
             for (X, y) in t_dataloader:
                 X, y = X.to(my_device), y.to(my_device)
 
+                # make prediction and calcualte accuracy
                 predictions = model(X)
                 _, predicted_labels = torch.max(predictions, 1)
                 batch_correct = (predicted_labels == y).sum()
